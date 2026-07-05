@@ -180,8 +180,8 @@ I tried tuning `batchsize = [16, 32, 64]`, `learnstep = [4, 8, 16]`, `num_envs =
     - But some new research on data efficient suggest use higher `replay ratio` to yeild better result. But not sure this will make model converge to local minima.
     - I think we need increase or decrease `replay ratio` too much because I see my PPO and SR2D2 not improve after 1-3M steps if model is converge to local minama (maybe overfit with normal `replay ratio`). Than we need increase `replay ratio` to learn faster (don't waste resource) and yeild higher performance within 1M steps. Or decrease `replay ratio` too much (like `learn-step = 52` as paper) to prevent overfit (make model still improve when stuck at local minama).
     - I think need to try both:
-        - If you want model learn faster, maybe I need increase `batchsize = 64` and `learn-step >= 4`. It still help improve performance within 100K-1M steps.
-        - If you want better performance for long training, maybe you need decrease `learn-step = 52` as paper.
+        - If you want model learn faster, maybe I need increase `batchsize = 64` and `learn-step <= 1` (need change code to update `epoch = 1-8` times per gradient update step). It still help improve performance within 100K-1M steps.
+        - If you want better performance for longer training, maybe you need decrease `learn-step = 52` as paper.
 
 - What are the differences between SR2D2 and R2D2?
     - Use a different set of hyperparameters.
