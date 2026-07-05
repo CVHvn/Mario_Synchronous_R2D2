@@ -7,12 +7,13 @@ My PyTorch Recurrent Replay Distributed DQN (R2D2 PPO) implementation for playin
 
 This original R2D2 use Asynchronous version:
 * Each worker (using num_envs = 256 workers, also known as 256 actors), learner, and per are separated into individual threads/computers/servers and run independently. 
-* Workers clone the model from the learner, run episodes, and push data to the per. 
+* Workers clone the model from the learner, run episodes, and push data to the per:
+    * Note that worker use worker/actor model (not target model or online model) to select action and calculate PER priority: This model update every 400 environment steps (400 environment steps). This model is older version of online model, but it is updated more frequently than the target model.
 * Per receives data push requests and sends the data to the learner. The learner receives data from per and trains the model, sending the model to the worker if a model update request is received. 
 
 With this distributed system, they won't use specific learn-step settings (how many environment steps to learn) but will maintain a ratio of 5 updates/s and 260 environment steps/s/environment. Therefore, the model will be updated every 260/5 = 52 environment steps (if using a synchronous system).
 
-Because I only have one computer, the above setup makes the algorithm run very slowly instead of speeding it up (or maybe my coding is terrible). I have converted R2D2 to a synchronous version (SR2D2). The algorithm will run like A2C or PPO. Using a single model, we will run a vector environment to simultaneously predict actions, execute episodes, and push data to per. The model will be trained every learn-step (4 instead of 52 because 52 training takes too long). I also modified some hyperparameters due to resource limitations and to train faster (see the hyperparameter section below).
+Because I only have one computer, the above setup makes the algorithm run very slowly instead of speeding it up (or maybe my coding is terrible). I have converted R2D2 to a synchronous version (SR2D2). The algorithm will run like A2C or PPO. Using a single model, we will run a vector environment to simultaneously predict actions, execute episodes, and push data to per. The model will be trained every learn-step (4 instead of 52 because 52 training takes too long). I also modified some hyperparameters due to resource limitations and to train faster (see the hyperparameter section below). I also remove worker/actor model because I can use online model to select action and calculate PER priority.
 
 <p align="center">
   <img src="demo/gif/1-1.gif" width="200">
@@ -96,7 +97,10 @@ I chose the hyperparameters based on the recommendations from the R2D2 paper (fo
 
 ### How to find it:
 - `num_envs = 16`: the same as previous projects. Set `num_envs = 256` if available. Because 256 run very slow, I decrease num_envs to 16.
-- `learn_step = 4`: same as DQN. Please set to `52` if have enough time and resource to waiting. This value impact `replay ratio` (effective number of times each experienced observation is being replayed). I set this to 4 than increate `replay ratio`. Maybe leak to overfiting on Per data. That might be the reason why R2D2 couldn't learn stage 8-4 (besides low num_envs).
+- `learn_step = 4`: same as DQN. Please set to `52` if have enough time and resource to waiting. This value impact `replay ratio` (effective number of times each experienced observation is being replayed). I set this to 4 than increate `replay ratio`:
+    - Maybe leak to overfiting on Per data. That might be the reason why R2D2 couldn't learn stage 8-4 (besides low num_envs).
+    - Update: some new research on data efficient suggest that use higher `replay ratio` (for example, [OTRainbow](https://arxiv.org/pdf/2003.10181) update every 8 times per env step) yeild better performance. But this type of research focus on data efficient (worker better within 100K-500K env steps), not sure this work better in more than 1M-1B step like R2D2/PPO, ... (some method maybe only improve performance in early training for data efficient but can't improve when train longer).
+    - I think `replay ratio` is a importance topic requiring research and experimentation that falls outside the project's scope.
 - `batchsize = 16`: R2D2 paper set `batchsize = 64`, but I decrease num_envs from 256 to 16 and learn_step from 52 to 4. Then I want lower batchsize to decrease (balance) `replay ratio`. Also, decreasing batchsize can help learn faster. I'm not sure if it affects performance. If you can, please set it to 64.
 - `gamma = 0.997`, `learning_rate = 1e-4`, `max_grad_norm = 40`: like R2D2 paper.
 - `target_update_freq = 2500`: like R2D2 paper. Some R2D2-based algorithms reduce target_update_freq to 1500 or 2000 (NGU, Agent57).
@@ -161,6 +165,7 @@ I tried tuning `batchsize = [16, 32, 64]`, `learnstep = [4, 8, 16]`, `num_envs =
 - How can you improve this code?
     - You can separate the agent evaluation part into a separate thread or process. I'm not very experienced with multithreaded programming, so I didn't do this.
     - Implement R2D2 instead of SR2D2.
+    - Tuning hyperparameters.
 
 - Why pretrained weights can't complete stage?
     - Because of different packages, sometimes pretrained programs will behave differently and not complete the stage (e.g., running on Colab). Make sure your settings match mine. However, if you train from scratch or use my code, it shouldn't be affected.
@@ -168,6 +173,15 @@ I tried tuning `batchsize = [16, 32, 64]`, `learnstep = [4, 8, 16]`, `num_envs =
 
 - How should hyperparameters be tuned?
     - Please reread the hyperparameters section. Tunning at a small scale hardly improves anything. If possible, use the original hyperparameters in the paper (if resources are large enough, using a distributed system as in the paper will be faster).
+    - Maybe you need change batchsize, learn-step to yeild higher or smaller `replay ratio`.
+
+- About `replay ratio`?
+    - Apex, R2D2, NGU and Agent57 is use a lot of worker and use low `replay ratio`. This prevent overfit and maybe make model still improve performance when training longer. As PPO with lower epoch.
+    - But some new research on data efficient suggest use higher `replay ratio` to yeild better result. But not sure this will make model converge to local minima.
+    - I think we need increase or decrease `replay ratio` too much because I see my PPO and SR2D2 not improve after 1-3M steps if model is converge to local minama (maybe overfit with normal `replay ratio`). Than we need increase `replay ratio` to learn faster (don't waste resource) and yeild higher performance within 1M steps. Or decrease `replay ratio` too much (like `learn-step = 52` as paper) to prevent overfit (make model still improve when stuck at local minama).
+    - I think need to try both:
+        - If you want model learn faster, maybe I need increase `batchsize = 64` and `learn-step >= 4`. It still help improve performance within 100K-1M steps.
+        - If you want better performance for long training, maybe you need decrease `learn-step = 52` as paper.
 
 - What are the differences between SR2D2 and R2D2?
     - Use a different set of hyperparameters.
@@ -184,14 +198,15 @@ I tried tuning `batchsize = [16, 32, 64]`, `learnstep = [4, 8, 16]`, `num_envs =
             - Mask the steps after the terminal state of the sequence. Push the steps after the terminal state into the next sequence. Training will work normally, but the loss calculation will not use the masked samples. I use this solution.
             - I'm not sure if R2D2 uses method 2, 3, or another approach.
         - I'm not sure how R2D2 builds per (I use method 3, saving by episode). For the worker synchronization issue, I use method 3 to solve it (masking after the terminal state and pushing that part into the sequence later).
+    - I use online model to select actions and calculate PER priority when R2D2 use actor/worker model (This is not online or target model as discuss above).
     - Because of the way I coded it, the worker will only push data into per when the episode ends, and R2D2 will push it into per when the sequence is complete.
     - r2d2 runs each worker on a separate thread. Sr2d2 runs them simultaneously. You can think the difference like A3C and A2C:
-        - r2d2 will only load the global model after 400 steps. Sr2d2 will always use the global model. This can also impact performance:
-        - r2d2 runs multiple (closely related) versions of the global model, so the data is more diverse.
-        - But because of this, the data may be noisy or outdated.
-        - It's not certain whether this is an advantage or a disadvantage. Like A2C and A3C, performance will vary depending on the environment.
-    - R2D2 runs as an independent learner, not dependent on workers collecting data. It continuously trains regardless of the workers. Therefore, they try to synchronize the ratio of 52 environment steps/update by limiting resources/computers to run at 260 environment steps/second and update 5 times/second.
-    - SR2D2 runs alternately. Once the worker collects 4 (52 if according to the paper) steps, the learner trains the model and repeats the process.
+        - r2d2 will only load the global model after 400 steps (each worker/actor have their own worker/actor model). Sr2d2 will always use the global model (not use worker/actor model). This can also impact performance:
+            - r2d2 runs multiple (closely related) versions of the global model, so the data is more diverse.
+            - But because of this, the data may be noisy or outdated.
+            - It's not certain whether this is an advantage or a disadvantage. Like A2C and A3C, performance will vary depending on the environment.
+        - R2D2 runs as an independent learner, not dependent on workers collecting data. It continuously trains regardless of the workers. Therefore, they try to synchronize the ratio of 52 environment steps/update by limiting resources/computers to run at 260 environment steps/second and update 5 times/second.
+        - SR2D2 runs alternately. Once the worker collects 4 (52 if according to the paper) steps, the learner trains the model and repeats the process.
 
 - Compare with PPO and LSTM PPO?
     - Harder to implement:
